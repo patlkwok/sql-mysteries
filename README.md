@@ -32,6 +32,83 @@ INSERT INTO solution VALUES (1, "Insert the name of the person you found here");
 SELECT value FROM solution;
 ```
 
+## Letting an AI Agent Play
+
+`sql_mystery_agent.py` is a command-line, tool-using agent that starts with only the public crime prompt. It can run read-only SQL against an in-memory copy of the game database and submit suspects to the database's original solution checker. It stops successfully only after the checker confirms both stages.
+
+It uses Python's standard library and the OpenAI Responses API, so it has no additional package dependencies. Python 3.8 or newer is required.
+
+In PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY = "your-api-key"
+py sql_mystery_agent.py
+```
+
+On macOS or Linux with Bash, Zsh, or a compatible shell:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+python3 sql_mystery_agent.py
+```
+
+The agent is cross-platform and uses only Python's standard library. On every platform it requires Python 3.8 or newer, internet access to `api.openai.com`, and an OpenAI API key with API billing enabled. The examples below use PowerShell; on macOS or Linux, replace `py` with `python3`, remove PowerShell's line-continuation backticks, and use `\` when splitting a command across lines.
+
+### Agent options
+
+The agent supports the following command-line flags:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--database PATH` | `sql-murder-mystery.db` next to the script | Use a different SQL Murder Mystery database file. |
+| `--model MODEL` | `OPENAI_MODEL`, or `gpt-5.6-sol` when unset | Select the Responses API model. |
+| `--reasoning-effort LEVEL` | `medium` | Set reasoning effort to `none`, `low`, `medium`, `high`, `xhigh`, or `max`. Higher effort may improve the investigation but can increase latency and token usage. |
+| `--max-tool-calls NUMBER` | `30` | Stop with an error if the agent exceeds this many database queries and solution submissions. |
+| `-h`, `--help` | — | Display the command-line help. |
+
+For example, use GPT-5.6 Terra with low reasoning effort:
+
+```powershell
+py sql_mystery_agent.py `
+  --model gpt-5.6-terra `
+  --reasoning-effort low
+```
+
+Use a different database and permit a longer investigation:
+
+```powershell
+py sql_mystery_agent.py `
+  --database C:\path\to\sql-murder-mystery.db `
+  --max-tool-calls 50
+```
+
+You can also choose the default model through an environment variable:
+
+```powershell
+$env:OPENAI_MODEL = "gpt-5.6-terra"
+py sql_mystery_agent.py
+```
+
+To see the built-in help:
+
+```powershell
+py sql_mystery_agent.py --help
+```
+
+### Agent tests
+
+Run the local tests with:
+
+```powershell
+py -m unittest -v
+```
+
+On macOS or Linux:
+
+```bash
+python3 -m unittest -v
+```
+
 
 ## Authors
 

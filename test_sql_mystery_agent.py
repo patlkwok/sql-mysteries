@@ -5,10 +5,15 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sql_mystery_agent import MysteryDatabase, run_agent
+from sql_mystery_agent import run_agent as run_openrouter_agent
+from sql_mystery_agent_openai import (
+    format_run_metrics,
+    MysteryDatabase,
+    run_agent as run_openai_agent,
+)
 
 
-class ScriptedClient:
+class ScriptedOpenAIClient:
     """A deterministic Responses API stand-in for testing the tool loop."""
 
     def __init__(self) -> None:
@@ -87,6 +92,120 @@ class ScriptedClient:
         return response
 
 
+class ScriptedOpenRouterClient:
+    """A deterministic OpenRouter chat-completions stand-in."""
+
+    def __init__(self) -> None:
+        self.step = 0
+        self.observed_messages: List[List[Dict[str, Any]]] = []
+
+    def create(
+        self,
+        messages: List[Dict[str, Any]],
+        _tools: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        self.observed_messages.append(list(messages))
+        scripted = [
+            {
+                "model": "fixture/tool-model",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "query_database",
+                                        "arguments": json.dumps(
+                                            {
+                                                "sql": (
+                                                    "SELECT description "
+                                                    "FROM crime_scene_report "
+                                                    "WHERE date = 20180115 "
+                                                    "AND type = 'murder' "
+                                                    "AND city = 'SQL City'"
+                                                )
+                                            }
+                                        ),
+                                    },
+                                }
+                            ],
+                            "reasoning_details": [
+                                {
+                                    "type": "reasoning.summary",
+                                    "summary": "Inspect the crime report.",
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+            {
+                "model": "fixture/tool-model",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-2",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "submit_solution",
+                                        "arguments": json.dumps(
+                                            {"name": "Investigator One"}
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+            {
+                "model": "fixture/tool-model",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-3",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "submit_solution",
+                                        "arguments": json.dumps(
+                                            {"name": "Mastermind Two"}
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+            {
+                "model": "fixture/tool-model",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "The database confirms both stages.",
+                        }
+                    }
+                ],
+            },
+        ]
+        response = scripted[self.step]
+        self.step += 1
+        return response
+
+
 class MysteryDatabaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -141,23 +260,57 @@ class MysteryDatabaseTests(unittest.TestCase):
         count = json.loads(self.database.query("SELECT count(*) AS n FROM person"))
         self.assertGreater(count["rows"][0][0], 0)
 
+    def test_run_metrics_are_provider_independent(self) -> None:
+        self.assertEqual(
+            format_run_metrics(1, 1, 2.345),
+            (
+                "Run metrics: 1 model turn, 1 failed solution submission, "
+                "2.35 seconds total."
+            ),
+        )
+        self.assertEqual(
+            format_run_metrics(4, 0, 0.1),
+            (
+                "Run metrics: 4 model turns, 0 failed solution submissions, "
+                "0.10 seconds total."
+            ),
+        )
+
     def test_solution_checks_do_not_modify_source_database(self) -> None:
         before = self.database_path.read_bytes()
+        self.database.submit_solution("Incorrect Suspect")
         self.database.submit_solution("Investigator One")
         self.database.submit_solution("Mastermind Two")
         after = self.database_path.read_bytes()
 
         self.assertTrue(self.database.solved)
+        self.assertEqual(self.database.failed_solution_submissions, 1)
         self.assertEqual(before, after)
 
-    def test_agent_requires_both_database_verdicts(self) -> None:
-        client = ScriptedClient()
-        answer = run_agent(self.database, client, verbose=False)
+    def test_openai_agent_requires_both_database_verdicts(self) -> None:
+        client = ScriptedOpenAIClient()
+        answer = run_openai_agent(self.database, client, verbose=False)
 
         self.assertTrue(self.database.stage_one_passed)
         self.assertTrue(self.database.stage_two_passed)
         self.assertEqual(answer, "The database confirms both stages.")
         self.assertEqual(len(client.observed_outputs), 3)
+
+    def test_openrouter_agent_preserves_reasoning_and_passes_both_stages(self) -> None:
+        client = ScriptedOpenRouterClient()
+        answer = run_openrouter_agent(self.database, client, verbose=False)
+
+        self.assertTrue(self.database.stage_one_passed)
+        self.assertTrue(self.database.stage_two_passed)
+        self.assertEqual(answer, "The database confirms both stages.")
+        self.assertEqual(len(client.observed_messages), 4)
+        continued_messages = client.observed_messages[1]
+        assistant = continued_messages[2]
+        self.assertEqual(
+            assistant["reasoning_details"][0]["summary"],
+            "Inspect the crime report.",
+        )
+        self.assertEqual(continued_messages[3]["role"], "tool")
 
 
 if __name__ == "__main__":
